@@ -142,6 +142,16 @@ impl eframe::App for MyApp {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
+                    let snarl = self
+                        .tree
+                        .tiles
+                        .iter_mut()
+                        .find_map(|(_, pane)| match pane {
+                            Tile::Pane(Pane::Nodes { snarl, .. }) => Some(snarl),
+                            _ => None,
+                        })
+                        .unwrap();
+
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close)
                     }
@@ -150,18 +160,7 @@ impl eframe::App for MyApp {
                             .add_filter("Graph File", &["dot"])
                             .save_file()
                         {
-                            let graph = self
-                                .tree
-                                .tiles
-                                .iter_mut()
-                                .filter_map(|(_, pane)| match pane {
-                                    Tile::Pane(Pane::Nodes { snarl, .. }) => Some(snarl),
-                                    _ => None,
-                                })
-                                .next()
-                                .unwrap();
-
-                            let graph = node_graph::DemoViewer.as_petgraph(graph);
+                            let graph = node_graph::DemoViewer::as_petgraph(snarl);
 
                             // Write to file
                             std::fs::write(
@@ -170,6 +169,9 @@ impl eframe::App for MyApp {
                             )
                             .unwrap();
                         }
+                    }
+                    if ui.button("Eval").clicked() {
+                        node_graph::DemoViewer::evaluate(snarl, None);
                     }
                 });
 

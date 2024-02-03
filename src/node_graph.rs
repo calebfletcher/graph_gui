@@ -61,7 +61,7 @@ impl DemoNode {
 pub struct DemoViewer;
 
 impl DemoViewer {
-    pub fn as_petgraph(&mut self, snarl: &mut Snarl<DemoNode>) -> Graph<NodeId, ()> {
+    pub fn as_petgraph(snarl: &mut Snarl<DemoNode>) -> Graph<NodeId, ()> {
         let mut graph = petgraph::Graph::<NodeId, ()>::new();
 
         let mut nodeid_to_idx = BTreeMap::new();
@@ -74,7 +74,7 @@ impl DemoViewer {
 
         // Add edges
         for (node_id, node) in snarl.node_ids() {
-            let downstream_nodeids = (0..self.outputs(node))
+            let downstream_nodeids = (0..Self.outputs(node))
                 .map(|i| {
                     snarl.out_pin(OutPinId {
                         node: node_id,
@@ -90,6 +90,15 @@ impl DemoViewer {
         }
 
         graph
+    }
+
+    pub fn evaluate(snarl: &mut Snarl<DemoNode>, _start: Option<NodeId>) {
+        let graph = Self::as_petgraph(snarl);
+        let mut visitor = petgraph::visit::Topo::new(&graph);
+        while let Some(node) = visitor.next(&graph) {
+            let id = graph[node];
+            DemoNode::update(id, snarl);
+        }
     }
 }
 
@@ -115,22 +124,27 @@ impl SnarlViewer<DemoNode> for DemoViewer {
             }
         }
 
+        let mut temp_graph = snarl.clone();
+
+        // Remove other connections to this input
         for &remote in &to.remotes {
-            snarl.disconnect(remote, to.id);
+            temp_graph.disconnect(remote, to.id);
         }
 
-        snarl.connect(from.id, to.id);
+        // Add the new connection
+        temp_graph.connect(from.id, to.id);
+
+        // Check for cycles
+        if petgraph::algo::is_cyclic_directed(&Self::as_petgraph(&mut temp_graph)) {
+            return;
+        }
+        *snarl = temp_graph;
+
+        // Update the destination node
         DemoNode::update(to.id.node, snarl);
-        // Propogate
-        // let downstream = (0..self.outputs(&snarl[to.id.node]))
-        //     .map(|i| {
-        //         snarl.out_pin(OutPinId {
-        //             node: to.id.node,
-        //             output: i,
-        //         })
-        //     })
-        //     .flat_map(|output| output.remotes);
-        self.as_petgraph(snarl);
+
+        // Propogate the destination node's value
+        Self::evaluate(snarl, Some(to.id.node));
     }
 
     fn title(&mut self, node: &DemoNode) -> String {
@@ -242,7 +256,9 @@ impl SnarlViewer<DemoNode> for DemoViewer {
             }
             DemoNode::Number(ref mut value) => {
                 assert_eq!(pin.id.output, 0, "Number node has only one output");
-                ui.add(egui::DragValue::new(value));
+                if ui.add(egui::DragValue::new(value)).changed() {
+                    Self::evaluate(snarl, Some(pin.id.node));
+                }
                 PinInfo::square().with_fill(NUMBER_COLOR)
             }
             DemoNode::String(ref mut value) => {
