@@ -145,8 +145,33 @@ impl eframe::App for MyApp {
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close)
                     }
+                    if ui.button("Export Graph").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Graph File", &["dot"])
+                            .save_file()
+                        {
+                            let graph = self
+                                .tree
+                                .tiles
+                                .iter_mut()
+                                .filter_map(|(_, pane)| match pane {
+                                    Tile::Pane(Pane::Nodes { snarl, .. }) => Some(snarl),
+                                    _ => None,
+                                })
+                                .next()
+                                .unwrap();
+
+                            let graph = node_graph::DemoViewer.as_petgraph(graph);
+
+                            // Write to file
+                            std::fs::write(
+                                path,
+                                format!("{:?}", petgraph::dot::Dot::with_config(&graph, &[])),
+                            )
+                            .unwrap();
+                        }
+                    }
                 });
-                ui.add_space(16.0);
 
                 egui::widgets::global_dark_light_mode_switch(ui);
             });

@@ -9,4 +9,5 @@ eframe = { version = "0.25.0", features = ["wgpu"] }
 egui-snarl = "0.2.1"
 egui_tiles = "0.6.0"
 petgraph = { version = "0.6.4", default-features = false }
+rfd = "0.13.0"
 syn = "2.0.48"

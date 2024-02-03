@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
+
 use eframe::egui;
 use egui::{Color32, Ui};
 use egui_snarl::{
     ui::{PinInfo, SnarlViewer},
     InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
 };
+use petgraph::Graph;
 
 const STRING_COLOR: Color32 = Color32::from_rgb(0x00, 0xb0, 0x00);
 const NUMBER_COLOR: Color32 = Color32::from_rgb(0xb0, 0x00, 0x00);
@@ -57,6 +60,39 @@ impl DemoNode {
 
 pub struct DemoViewer;
 
+impl DemoViewer {
+    pub fn as_petgraph(&mut self, snarl: &mut Snarl<DemoNode>) -> Graph<NodeId, ()> {
+        let mut graph = petgraph::Graph::<NodeId, ()>::new();
+
+        let mut nodeid_to_idx = BTreeMap::new();
+
+        // Add nodes to graph
+        for (node_id, _node) in snarl.node_ids() {
+            let idx = graph.add_node(node_id);
+            nodeid_to_idx.insert(node_id, idx);
+        }
+
+        // Add edges
+        for (node_id, node) in snarl.node_ids() {
+            let downstream_nodeids = (0..self.outputs(node))
+                .map(|i| {
+                    snarl.out_pin(OutPinId {
+                        node: node_id,
+                        output: i,
+                    })
+                })
+                .flat_map(|output| output.remotes)
+                .map(|inpin| inpin.node);
+
+            for downstream in downstream_nodeids {
+                graph.add_edge(nodeid_to_idx[&node_id], nodeid_to_idx[&downstream], ());
+            }
+        }
+
+        graph
+    }
+}
+
 impl SnarlViewer<DemoNode> for DemoViewer {
     #[inline]
     fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<DemoNode>) {
@@ -73,6 +109,7 @@ impl SnarlViewer<DemoNode> for DemoViewer {
                 unreachable!("String node has no inputs")
             }
             (DemoNode::Number(_), DemoNode::Add { .. }) => {}
+            (DemoNode::Add { .. }, DemoNode::Add { .. }) => {}
             (_, DemoNode::Add { .. }) => {
                 unreachable!("cannot add non-numbers")
             }
@@ -85,14 +122,15 @@ impl SnarlViewer<DemoNode> for DemoViewer {
         snarl.connect(from.id, to.id);
         DemoNode::update(to.id.node, snarl);
         // Propogate
-        let downstream = (0..self.outputs(&snarl[to.id.node]))
-            .map(|i| {
-                snarl.out_pin(OutPinId {
-                    node: to.id.node,
-                    output: i,
-                })
-            })
-            .flat_map(|output| output.remotes);
+        // let downstream = (0..self.outputs(&snarl[to.id.node]))
+        //     .map(|i| {
+        //         snarl.out_pin(OutPinId {
+        //             node: to.id.node,
+        //             output: i,
+        //         })
+        //     })
+        //     .flat_map(|output| output.remotes);
+        self.as_petgraph(snarl);
     }
 
     fn title(&mut self, node: &DemoNode) -> String {
