@@ -1,0 +1,10 @@
+[package]
+name = "graph_gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = { version = "0.25.0", features = ["wgpu"] }
+egui-snarl = "0.2.1"
+egui_tiles = "0.6.0"
+syn = "2.0.48"
