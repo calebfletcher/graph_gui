@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use eframe::egui;
 use egui::{Color32, Ui};
@@ -6,7 +6,7 @@ use egui_snarl::{
     ui::{PinInfo, SnarlViewer},
     InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
 };
-use petgraph::Graph;
+use petgraph::{visit::Walker, Graph};
 
 const STRING_COLOR: Color32 = Color32::from_rgb(0x00, 0xb0, 0x00);
 const NUMBER_COLOR: Color32 = Color32::from_rgb(0xb0, 0x00, 0x00);
@@ -92,10 +92,36 @@ impl DemoViewer {
         graph
     }
 
-    pub fn evaluate(snarl: &mut Snarl<DemoNode>, _start: Option<NodeId>) {
+    pub fn evaluate(snarl: &mut Snarl<DemoNode>, start: Option<NodeId>) {
         let graph = Self::as_petgraph(snarl);
+
+        // TODO: Replace this with a more efficient filtered toposort with
+        // a specified starting point
+        let node_filter = match start {
+            Some(initial) => {
+                let initial = graph
+                    .node_indices()
+                    .find(|idx| graph[*idx] == initial)
+                    .unwrap();
+
+                // Find all the nodes downstream of this one
+                let bfs = petgraph::visit::Bfs::new(&graph, initial);
+                let downstream_nodes = bfs.iter(&graph).collect::<BTreeSet<_>>();
+                Some(downstream_nodes)
+            }
+            None => None,
+        };
         let mut visitor = petgraph::visit::Topo::new(&graph);
+
+        // Visit every node in topological order
         while let Some(node) = visitor.next(&graph) {
+            // If there is a filter, only include nodes that are in the filter
+            if let Some(filter) = &node_filter {
+                if !filter.contains(&node) {
+                    continue;
+                }
+            }
+            // Update the node
             let id = graph[node];
             DemoNode::update(id, snarl);
         }
