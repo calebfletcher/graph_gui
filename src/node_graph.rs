@@ -12,56 +12,162 @@ const STRING_COLOR: Color32 = Color32::from_rgb(0x00, 0xb0, 0x00);
 const NUMBER_COLOR: Color32 = Color32::from_rgb(0xb0, 0x00, 0x00);
 const UNTYPED_COLOR: Color32 = Color32::from_rgb(0xb0, 0xb0, 0xb0);
 
-#[derive(Clone)]
-pub enum DemoNode {
-    /// Node with single input.
-    /// Displays the value of the input.
-    Sink,
-
-    /// Value node with a single output.
-    /// The value is editable in UI.
+pub enum TypedData {
     Number(f64),
-
-    /// Value node with a single output.
     String(String),
-
-    Add {
-        res: f64,
-    },
+    Unknown,
 }
 
-impl DemoNode {
-    fn update(node: NodeId, snarl: &mut Snarl<DemoNode>) {
-        match snarl[node] {
-            DemoNode::Sink => {}
-            DemoNode::Number(_) => {}
-            DemoNode::String(_) => {}
-            DemoNode::Add { .. } => {
-                // Eval addition
-                let value: f64 = (0..2)
-                    .map(|idx| snarl.in_pin(InPinId { node, input: idx }))
-                    .flat_map(|pin| pin.remotes)
-                    .map(|pin| match snarl[pin.node] {
-                        DemoNode::Sink => unreachable!(),
-                        DemoNode::Number(val) => val,
-                        DemoNode::String(_) => unreachable!(),
-                        DemoNode::Add { res } => res,
-                    })
-                    .sum();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataType {
+    Number,
+    String,
+    Unknown,
+}
 
-                // Need to get a new reference to res again
-                if let DemoNode::Add { ref mut res } = snarl[node] {
-                    *res = value;
-                }
-            }
+impl DataType {
+    fn colour(&self) -> Color32 {
+        match self {
+            DataType::Number => NUMBER_COLOR,
+            DataType::String => STRING_COLOR,
+            DataType::Unknown => UNTYPED_COLOR,
         }
+    }
+
+    fn pin_info(&self) -> PinInfo {
+        let info = match self {
+            DataType::Number => PinInfo::square(),
+            DataType::String => PinInfo::triangle(),
+            DataType::Unknown => PinInfo::circle(),
+        };
+        info.with_fill(self.colour())
+    }
+}
+
+pub trait Node {
+    fn name(&self) -> String;
+    fn description(&self) -> Option<String> {
+        None
+    }
+    fn inputs(&self) -> Vec<DataType>;
+    fn outputs(&self) -> Vec<DataType>;
+    /// Returns none if the value is not available yet
+    fn output_value(&self, idx: usize) -> Option<TypedData> {
+        let _ = idx;
+        unimplemented!()
+    }
+    fn update(&mut self, inputs: &[TypedData]) {
+        let _ = inputs;
+    }
+    fn show_output(&mut self, idx: usize, ui: &mut Ui) {
+        let _ = (idx, ui);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NumberNode {
+    value: f64,
+}
+
+impl NumberNode {
+    pub fn new(value: f64) -> Self {
+        Self { value }
+    }
+}
+
+impl Node for NumberNode {
+    fn name(&self) -> String {
+        "Number".to_owned()
+    }
+
+    fn inputs(&self) -> Vec<DataType> {
+        Vec::new()
+    }
+
+    fn outputs(&self) -> Vec<DataType> {
+        vec![DataType::Number]
+    }
+
+    fn output_value(&self, idx: usize) -> Option<TypedData> {
+        assert_eq!(idx, 0);
+        Some(TypedData::Number(self.value))
+    }
+
+    fn show_output(&mut self, idx: usize, ui: &mut Ui) {
+        assert_eq!(idx, 0);
+        if ui.add(egui::DragValue::new(&mut self.value)).changed() {
+            //Self::evaluate(snarl, Some(pin.id.node));
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AddNode {
+    cached_result: Option<f64>,
+}
+
+impl Node for AddNode {
+    fn name(&self) -> String {
+        "Add".to_owned()
+    }
+
+    fn inputs(&self) -> Vec<DataType> {
+        vec![DataType::Number, DataType::Number]
+    }
+
+    fn outputs(&self) -> Vec<DataType> {
+        vec![DataType::Number]
+    }
+
+    fn output_value(&self, idx: usize) -> Option<TypedData> {
+        assert_eq!(idx, 0);
+        self.cached_result.map(TypedData::Number)
+    }
+
+    fn show_output(&mut self, idx: usize, ui: &mut Ui) {
+        assert_eq!(idx, 0);
+        if let Some(res) = self.cached_result {
+            ui.label(format_float(res));
+        }
+    }
+
+    fn update(&mut self, inputs: &[TypedData]) {
+        self.cached_result = Some(
+            inputs
+                .iter()
+                .filter_map(|v| {
+                    if let TypedData::Number(v) = v {
+                        Some(*v)
+                    } else {
+                        None
+                    }
+                })
+                .sum(),
+        );
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SinkNode;
+
+impl Node for SinkNode {
+    fn name(&self) -> String {
+        "Sink".to_owned()
+    }
+
+    fn inputs(&self) -> Vec<DataType> {
+        vec![DataType::Number]
+    }
+
+    fn outputs(&self) -> Vec<DataType> {
+        Vec::new()
     }
 }
 
 pub struct DemoViewer;
 
 impl DemoViewer {
-    pub fn as_petgraph(snarl: &mut Snarl<DemoNode>) -> Graph<NodeId, ()> {
+    pub fn as_petgraph(snarl: &mut Snarl<Box<dyn Node>>) -> Graph<NodeId, ()> {
         let mut graph = petgraph::Graph::<NodeId, ()>::new();
 
         let mut nodeid_to_idx = BTreeMap::new();
@@ -92,7 +198,7 @@ impl DemoViewer {
         graph
     }
 
-    pub fn evaluate(snarl: &mut Snarl<DemoNode>, start: Option<NodeId>) {
+    pub fn evaluate(snarl: &mut Snarl<Box<dyn Node>>, start: Option<NodeId>) {
         let graph = Self::as_petgraph(snarl);
 
         // TODO: Replace this with a more efficient filtered toposort with
@@ -123,12 +229,29 @@ impl DemoViewer {
             }
             // Update the node
             let id = graph[node];
-            DemoNode::update(id, snarl);
+            let inputs = snarl[id]
+                .inputs()
+                .into_iter()
+                .enumerate()
+                .map(|(i, _)| snarl.in_pin(InPinId { node: id, input: i }))
+                .map(|inpin| {
+                    assert_eq!(inpin.remotes.len(), 1);
+                    let remote = inpin.remotes[0];
+                    snarl[remote.node].output_value(remote.output)
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(inputs) = inputs {
+                // All inputs are connected
+                snarl[id].update(&inputs);
+            }
+
+            // TODO: Propogate
+            //DemoNode::update(id, snarl);
         }
     }
 }
 
-impl SnarlViewer<DemoNode> for DemoViewer {
+impl SnarlViewer<Box<dyn Node>> for DemoViewer {
     fn show_header(
         &mut self,
         node: NodeId,
@@ -136,80 +259,73 @@ impl SnarlViewer<DemoNode> for DemoViewer {
         _outputs: &[OutPin],
         ui: &mut Ui,
         _scale: f32,
-        _snarl: &mut Snarl<DemoNode>,
+        _snarl: &mut Snarl<Box<dyn Node>>,
     ) {
         //ui.label(self.title(&snarl[node]));
         ui.label(format!("ID: {}", node.0));
     }
 
-    fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<DemoNode>) {
-        // Validate connection
-        match (&snarl[from.id.node], &snarl[to.id.node]) {
-            (DemoNode::Sink, _) => {
-                unreachable!("Sink node has no outputs")
-            }
-            (_, DemoNode::Sink) => {}
-            (_, DemoNode::Number(_)) => {
-                unreachable!("Number node has no inputs")
-            }
-            (_, DemoNode::String(_)) => {
-                unreachable!("String node has no inputs")
-            }
-            (DemoNode::Number(_), DemoNode::Add { .. }) => {}
-            (DemoNode::Add { .. }, DemoNode::Add { .. }) => {}
-            (_, DemoNode::Add { .. }) => {
-                unreachable!("cannot add non-numbers")
-            }
-        }
+    fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<Box<dyn Node>>) {
+        let from_node = &snarl[from.id.node];
+        let to_node = &snarl[to.id.node];
 
-        let mut temp_graph = snarl.clone();
+        // Validate connection
+        assert!(from.id.output < from_node.outputs().len());
+        assert!(to.id.input < to_node.inputs().len());
+        assert_eq!(
+            from_node.outputs()[from.id.output],
+            to_node.inputs()[to.id.input]
+        );
 
         // Remove other connections to this input
         for &remote in &to.remotes {
-            temp_graph.disconnect(remote, to.id);
+            snarl.disconnect(remote, to.id);
         }
 
         // Add the new connection
-        temp_graph.connect(from.id, to.id);
+        snarl.connect(from.id, to.id);
 
         // Check for cycles
-        if petgraph::algo::is_cyclic_directed(&Self::as_petgraph(&mut temp_graph)) {
+        if petgraph::algo::is_cyclic_directed(&Self::as_petgraph(snarl)) {
             return;
         }
-        *snarl = temp_graph;
 
         // Update the destination node
-        DemoNode::update(to.id.node, snarl);
+        let inputs = snarl[to.id.node]
+            .inputs()
+            .into_iter()
+            .enumerate()
+            .map(|(i, _)| {
+                snarl.in_pin(InPinId {
+                    node: to.id.node,
+                    input: i,
+                })
+            })
+            .map(|inpin| {
+                assert_eq!(inpin.remotes.len(), 1);
+                let remote = inpin.remotes[0];
+                snarl[remote.node].output_value(remote.output)
+            })
+            .collect::<Option<Vec<_>>>();
+        if let Some(inputs) = inputs {
+            // All inputs are connected
+            snarl[to.id.node].update(&inputs);
+        }
 
         // Propogate the destination node's value
         Self::evaluate(snarl, Some(to.id.node));
     }
 
-    fn title(&mut self, node: &DemoNode) -> String {
-        match node {
-            DemoNode::Sink => "Sink".to_owned(),
-            DemoNode::Number(_) => "Number".to_owned(),
-            DemoNode::String(_) => "String".to_owned(),
-            DemoNode::Add { .. } => "Add".to_owned(),
-        }
+    fn title(&mut self, node: &Box<dyn Node>) -> String {
+        node.name()
     }
 
-    fn inputs(&mut self, node: &DemoNode) -> usize {
-        match node {
-            DemoNode::Sink => 1,
-            DemoNode::Number(_) => 0,
-            DemoNode::String(_) => 0,
-            DemoNode::Add { .. } => 2,
-        }
+    fn inputs(&mut self, node: &Box<dyn Node>) -> usize {
+        node.inputs().len()
     }
 
-    fn outputs(&mut self, node: &DemoNode) -> usize {
-        match node {
-            DemoNode::Sink => 0,
-            DemoNode::Number(_) => 1,
-            DemoNode::String(_) => 1,
-            DemoNode::Add { .. } => 1,
-        }
+    fn outputs(&mut self, node: &Box<dyn Node>) -> usize {
+        node.outputs().len()
     }
 
     fn show_input(
@@ -217,68 +333,9 @@ impl SnarlViewer<DemoNode> for DemoViewer {
         pin: &InPin,
         ui: &mut Ui,
         _scale: f32,
-        snarl: &mut Snarl<DemoNode>,
+        snarl: &mut Snarl<Box<dyn Node>>,
     ) -> PinInfo {
-        match snarl[pin.id.node] {
-            DemoNode::Sink => {
-                assert_eq!(pin.id.input, 0, "Sink node has only one input");
-
-                match &*pin.remotes {
-                    [] => {
-                        ui.label("None");
-                        PinInfo::circle().with_fill(UNTYPED_COLOR)
-                    }
-                    [remote] => match snarl[remote.node] {
-                        DemoNode::Sink => unreachable!("Sink node has no outputs"),
-                        DemoNode::Number(value) => {
-                            assert_eq!(remote.output, 0, "Number node has only one output");
-                            ui.label(format_float(value));
-                            PinInfo::square().with_fill(NUMBER_COLOR)
-                        }
-                        DemoNode::String(ref value) => {
-                            assert_eq!(remote.output, 0, "String node has only one output");
-                            ui.label(format!("{:?}", value));
-                            PinInfo::triangle().with_fill(STRING_COLOR)
-                        }
-                        DemoNode::Add { res } => {
-                            ui.label(format_float(res));
-                            PinInfo::square().with_fill(NUMBER_COLOR)
-                        }
-                    },
-                    _ => unreachable!("Sink input has only one wire"),
-                }
-            }
-            DemoNode::Number(_) => {
-                unreachable!("Number node has no inputs")
-            }
-            DemoNode::String(_) => {
-                unreachable!("String node has no inputs")
-            }
-            DemoNode::Add { .. } => match &*pin.remotes {
-                [] => {
-                    ui.label("None");
-                    PinInfo::square().with_fill(NUMBER_COLOR)
-                }
-                [remote] => match snarl[remote.node] {
-                    DemoNode::Sink => unreachable!("Sink node has no outputs"),
-                    DemoNode::Number(value) => {
-                        assert_eq!(remote.output, 0, "Number node has only one output");
-                        ui.label(format_float(value));
-                        PinInfo::square().with_fill(NUMBER_COLOR)
-                    }
-                    DemoNode::String(ref value) => {
-                        assert_eq!(remote.output, 0, "String node has only one output");
-                        ui.label(format!("{:?}", value));
-                        PinInfo::triangle().with_fill(STRING_COLOR)
-                    }
-                    DemoNode::Add { res } => {
-                        ui.label(format_float(res));
-                        PinInfo::square().with_fill(NUMBER_COLOR)
-                    }
-                },
-                _ => unreachable!("Sink input has only one wire"),
-            },
-        }
+        snarl[pin.id.node].inputs()[pin.id.input].pin_info()
     }
 
     fn show_output(
@@ -286,79 +343,37 @@ impl SnarlViewer<DemoNode> for DemoViewer {
         pin: &OutPin,
         ui: &mut Ui,
         _scale: f32,
-        snarl: &mut Snarl<DemoNode>,
+        snarl: &mut Snarl<Box<dyn Node>>,
     ) -> PinInfo {
-        match snarl[pin.id.node] {
-            DemoNode::Sink => {
-                unreachable!("Sink node has no outputs")
-            }
-            DemoNode::Number(ref mut value) => {
-                assert_eq!(pin.id.output, 0, "Number node has only one output");
-                if ui.add(egui::DragValue::new(value)).changed() {
-                    Self::evaluate(snarl, Some(pin.id.node));
-                }
-                PinInfo::square().with_fill(NUMBER_COLOR)
-            }
-            DemoNode::String(ref mut value) => {
-                assert_eq!(pin.id.output, 0, "String node has only one output");
-                let edit = egui::TextEdit::singleline(value)
-                    .clip_text(false)
-                    .desired_width(0.0)
-                    .margin(ui.spacing().item_spacing);
-                ui.add(edit);
-                PinInfo::triangle().with_fill(STRING_COLOR)
-            }
-            DemoNode::Add { res } => {
-                ui.label(format_float(res));
-                PinInfo::square().with_fill(NUMBER_COLOR)
-            }
-        }
+        snarl[pin.id.node].show_output(pin.id.output, ui);
+        snarl[pin.id.node].outputs()[pin.id.output].pin_info()
+        //     DemoNode::String(ref mut value) => {
+        //         assert_eq!(pin.id.output, 0, "String node has only one output");
+        //         let edit = egui::TextEdit::singleline(value)
+        //             .clip_text(false)
+        //             .desired_width(0.0)
+        //             .margin(ui.spacing().item_spacing);
+        //         ui.add(edit);
+        //         PinInfo::triangle().with_fill(STRING_COLOR)
+        //     }
     }
 
     fn input_color(
         &mut self,
         pin: &InPin,
         _style: &egui::Style,
-        snarl: &mut Snarl<DemoNode>,
+        snarl: &mut Snarl<Box<dyn Node>>,
     ) -> Color32 {
-        match snarl[pin.id.node] {
-            DemoNode::Sink => {
-                assert_eq!(pin.id.input, 0, "Sink node has only one input");
-                match &*pin.remotes {
-                    [] => UNTYPED_COLOR,
-                    [remote] => match snarl[remote.node] {
-                        DemoNode::Sink => unreachable!("Sink node has no outputs"),
-                        DemoNode::Number(_) => NUMBER_COLOR,
-                        DemoNode::String(_) => STRING_COLOR,
-                        DemoNode::Add { .. } => NUMBER_COLOR,
-                    },
-                    _ => unreachable!("Sink input has only one wire"),
-                }
-            }
-            DemoNode::Number(_) => {
-                unreachable!("Number node has no inputs")
-            }
-            DemoNode::String(_) => {
-                unreachable!("String node has no inputs")
-            }
-            DemoNode::Add { .. } => NUMBER_COLOR,
-        }
+        snarl[pin.id.node].inputs()[pin.id.input].colour()
     }
 
     fn output_color(
         &mut self,
         pin: &OutPin,
         _style: &egui::Style,
-        snarl: &mut Snarl<DemoNode>,
+        snarl: &mut Snarl<Box<dyn Node>>,
     ) -> Color32 {
-        match snarl[pin.id.node] {
-            DemoNode::Sink => {
-                unreachable!("Sink node has no outputs")
-            }
-            DemoNode::Number(_) => NUMBER_COLOR,
-            DemoNode::String(_) => STRING_COLOR,
-            DemoNode::Add { .. } => NUMBER_COLOR,
-        }
+        snarl[pin.id.node].outputs()[pin.id.output].colour()
     }
 
     fn graph_menu(
@@ -366,23 +381,19 @@ impl SnarlViewer<DemoNode> for DemoViewer {
         pos: egui::Pos2,
         ui: &mut Ui,
         _scale: f32,
-        snarl: &mut Snarl<DemoNode>,
+        snarl: &mut Snarl<Box<dyn Node>>,
     ) {
         ui.label("Add node");
         if ui.button("Number").clicked() {
-            snarl.insert_node(pos, DemoNode::Number(0.0));
-            ui.close_menu();
-        }
-        if ui.button("String").clicked() {
-            snarl.insert_node(pos, DemoNode::String("".to_owned()));
+            snarl.insert_node(pos, Box::new(NumberNode::new(0.)));
             ui.close_menu();
         }
         if ui.button("Sink").clicked() {
-            snarl.insert_node(pos, DemoNode::Sink);
+            snarl.insert_node(pos, Box::new(SinkNode));
             ui.close_menu();
         }
         if ui.button("Add").clicked() {
-            snarl.insert_node(pos, DemoNode::Add { res: 0. });
+            snarl.insert_node(pos, Box::<AddNode>::default());
             ui.close_menu();
         }
     }
@@ -394,7 +405,7 @@ impl SnarlViewer<DemoNode> for DemoViewer {
         _outputs: &[OutPin],
         ui: &mut Ui,
         _scale: f32,
-        snarl: &mut Snarl<DemoNode>,
+        snarl: &mut Snarl<Box<dyn Node>>,
     ) {
         ui.label("Node menu");
         if ui.button("Remove").clicked() {
@@ -403,7 +414,7 @@ impl SnarlViewer<DemoNode> for DemoViewer {
         }
     }
 
-    fn has_on_hover_popup(&mut self, _: &DemoNode) -> bool {
+    fn has_on_hover_popup(&mut self, _: &Box<dyn Node>) -> bool {
         true
     }
 
@@ -414,21 +425,10 @@ impl SnarlViewer<DemoNode> for DemoViewer {
         _outputs: &[OutPin],
         ui: &mut Ui,
         _scale: f32,
-        snarl: &mut Snarl<DemoNode>,
+        snarl: &mut Snarl<Box<dyn Node>>,
     ) {
-        match snarl[node] {
-            DemoNode::Sink => {
-                ui.label("Displays anything connected to it");
-            }
-            DemoNode::Number(_) => {
-                ui.label("Outputs integer value");
-            }
-            DemoNode::String(_) => {
-                ui.label("Outputs string value");
-            }
-            DemoNode::Add { .. } => {
-                ui.label("Outputs added value");
-            }
+        if let Some(desc) = snarl[node].description() {
+            ui.label(desc);
         }
     }
 }

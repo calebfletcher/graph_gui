@@ -52,7 +52,7 @@ impl Pane {
 }
 
 struct TreeBehavior<'a> {
-    snarl: &'a mut Snarl<node_graph::DemoNode>,
+    snarl: &'a mut Snarl<Box<dyn node_graph::Node>>,
     style: &'a SnarlStyle,
     task_execution: &'a mut Option<execution_engine::TaskDag>,
 }
@@ -145,7 +145,7 @@ impl<'a> egui_tiles::Behavior<Pane> for TreeBehavior<'a> {
 
 struct MyApp {
     tree: egui_tiles::Tree<Pane>,
-    snarl: Snarl<node_graph::DemoNode>,
+    snarl: Snarl<Box<dyn node_graph::Node>>,
     style: SnarlStyle,
     task_execution: Option<execution_engine::TaskDag>,
 }
@@ -154,7 +154,7 @@ impl Default for MyApp {
     fn default() -> Self {
         let mut tiles = egui_tiles::Tiles::default();
 
-        let snarl = Snarl::new();
+        let snarl: Snarl<Box<dyn node_graph::Node>> = Snarl::new();
         let mut style = SnarlStyle::new();
         style.downscale_wire_frame = true;
         style.bg_pattern = BackgroundPattern::Grid(egui_snarl::ui::Grid {
