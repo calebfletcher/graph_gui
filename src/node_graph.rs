@@ -46,9 +46,6 @@ impl DataType {
 
 pub trait Node {
     fn name(&self) -> String;
-    fn description(&self) -> Option<String> {
-        None
-    }
     fn inputs(&self) -> Vec<DataType>;
     fn outputs(&self) -> Vec<DataType>;
     /// Returns none if the value is not available yet
@@ -59,11 +56,15 @@ pub trait Node {
     fn update(&mut self, inputs: &[TypedData]) {
         let _ = inputs;
     }
-    fn show_input(&mut self, idx: usize, remote: Option<TypedData>, ui: &mut Ui) {
+    /// Return true if the node should be recalculated
+    fn show_input(&mut self, idx: usize, remote: Option<TypedData>, ui: &mut Ui) -> bool {
         let _ = (idx, remote, ui);
+        false
     }
-    fn show_output(&mut self, idx: usize, ui: &mut Ui) {
+    /// Return true if the node should be recalculated
+    fn show_output(&mut self, idx: usize, ui: &mut Ui) -> bool {
         let _ = (idx, ui);
+        false
     }
 }
 
@@ -96,12 +97,13 @@ impl Node for NumberNode {
         Some(TypedData::Number(self.value))
     }
 
-    fn show_output(&mut self, idx: usize, ui: &mut Ui) {
+    fn show_output(&mut self, idx: usize, ui: &mut Ui) -> bool {
         assert_eq!(idx, 0);
         if ui.add(egui::DragValue::new(&mut self.value)).changed() {
             // TODO: Evaluate and propagate
-            //Self::evaluate(snarl, Some(pin.id.node));
+            return true;
         }
+        false
     }
 }
 
@@ -128,22 +130,24 @@ impl Node for AddNode {
         self.cached_result.map(TypedData::Number)
     }
 
-    fn show_input(&mut self, idx: usize, remote: Option<TypedData>, ui: &mut Ui) {
+    fn show_input(&mut self, idx: usize, remote: Option<TypedData>, ui: &mut Ui) -> bool {
         assert!(idx < 2);
         let Some(remote) = remote else {
-            return;
+            return false;
         };
         match remote {
             TypedData::Number(val) => ui.label(format_float(val)),
             _ => unimplemented!(),
         };
+        false
     }
 
-    fn show_output(&mut self, idx: usize, ui: &mut Ui) {
+    fn show_output(&mut self, idx: usize, ui: &mut Ui) -> bool {
         assert_eq!(idx, 0);
         if let Some(res) = self.cached_result {
             ui.label(format_float(res));
         }
+        false
     }
 
     fn update(&mut self, inputs: &[TypedData]) {
@@ -178,15 +182,16 @@ impl Node for SinkNode {
         Vec::new()
     }
 
-    fn show_input(&mut self, idx: usize, remote: Option<TypedData>, ui: &mut Ui) {
+    fn show_input(&mut self, idx: usize, remote: Option<TypedData>, ui: &mut Ui) -> bool {
         assert_eq!(idx, 0);
         let Some(remote) = remote else {
-            return;
+            return false;
         };
         match remote {
             TypedData::Number(val) => ui.label(format_float(val)),
             _ => unimplemented!(),
         };
+        false
     }
 }
 
@@ -363,7 +368,10 @@ impl SnarlViewer<Box<dyn Node>> for DemoViewer {
             .remotes
             .first()
             .and_then(|remote| snarl[remote.node].output_value(remote.output));
-        snarl[pin.id.node].show_input(pin.id.input, remote, ui);
+        let should_update = snarl[pin.id.node].show_input(pin.id.input, remote, ui);
+        if should_update {
+            Self::evaluate(snarl, Some(pin.id.node));
+        }
         snarl[pin.id.node].inputs()[pin.id.input].pin_info()
     }
 
@@ -374,7 +382,10 @@ impl SnarlViewer<Box<dyn Node>> for DemoViewer {
         _scale: f32,
         snarl: &mut Snarl<Box<dyn Node>>,
     ) -> PinInfo {
-        snarl[pin.id.node].show_output(pin.id.output, ui);
+        let should_update = snarl[pin.id.node].show_output(pin.id.output, ui);
+        if should_update {
+            Self::evaluate(snarl, Some(pin.id.node));
+        }
         snarl[pin.id.node].outputs()[pin.id.output].pin_info()
         //     DemoNode::String(ref mut value) => {
         //         assert_eq!(pin.id.output, 0, "String node has only one output");
@@ -440,24 +451,6 @@ impl SnarlViewer<Box<dyn Node>> for DemoViewer {
         if ui.button("Remove").clicked() {
             snarl.remove_node(node);
             ui.close_menu();
-        }
-    }
-
-    fn has_on_hover_popup(&mut self, _: &Box<dyn Node>) -> bool {
-        true
-    }
-
-    fn show_on_hover_popup(
-        &mut self,
-        node: NodeId,
-        _inputs: &[InPin],
-        _outputs: &[OutPin],
-        ui: &mut Ui,
-        _scale: f32,
-        snarl: &mut Snarl<Box<dyn Node>>,
-    ) {
-        if let Some(desc) = snarl[node].description() {
-            ui.label(desc);
         }
     }
 }

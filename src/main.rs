@@ -154,7 +154,8 @@ impl Default for MyApp {
     fn default() -> Self {
         let mut tiles = egui_tiles::Tiles::default();
 
-        let snarl: Snarl<Box<dyn node_graph::Node>> = Snarl::new();
+        node_graph::DemoViewer::evaluate(&mut snarl, None);
+
         let mut style = SnarlStyle::new();
         style.downscale_wire_frame = true;
         style.bg_pattern = BackgroundPattern::Grid(egui_snarl::ui::Grid {
