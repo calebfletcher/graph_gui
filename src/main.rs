@@ -21,7 +21,12 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Task Execution Engine",
         options,
-        Box::new(|_cc| Box::<MyApp>::default()),
+        Box::new(|cc| {
+            cc.egui_ctx.style_mut(|style| {
+                style.visuals.window_shadow = eframe::epaint::Shadow::NONE;
+            });
+            Box::<MyApp>::default()
+        }),
     )
 }
 
