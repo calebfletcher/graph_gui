@@ -42,6 +42,16 @@ impl DataType {
         };
         info.with_fill(self.colour())
     }
+
+    fn compatible_with(&self, destination: DataType) -> bool {
+        if *self == destination {
+            return true;
+        }
+        if destination == DataType::Unknown {
+            return true;
+        }
+        false
+    }
 }
 
 pub trait Node {
@@ -300,10 +310,7 @@ impl SnarlViewer<Box<dyn Node>> for DemoViewer {
         // Validate connection
         assert!(from.id.output < from_node.outputs().len());
         assert!(to.id.input < to_node.inputs().len());
-        assert_eq!(
-            from_node.outputs()[from.id.output],
-            to_node.inputs()[to.id.input]
-        );
+        assert!(from_node.outputs()[from.id.output].compatible_with(to_node.inputs()[to.id.input]));
 
         // Remove other connections to this input
         for &remote in &to.remotes {
@@ -387,15 +394,6 @@ impl SnarlViewer<Box<dyn Node>> for DemoViewer {
             Self::evaluate(snarl, Some(pin.id.node));
         }
         snarl[pin.id.node].outputs()[pin.id.output].pin_info()
-        //     DemoNode::String(ref mut value) => {
-        //         assert_eq!(pin.id.output, 0, "String node has only one output");
-        //         let edit = egui::TextEdit::singleline(value)
-        //             .clip_text(false)
-        //             .desired_width(0.0)
-        //             .margin(ui.spacing().item_spacing);
-        //         ui.add(edit);
-        //         PinInfo::triangle().with_fill(STRING_COLOR)
-        //     }
     }
 
     fn input_color(
