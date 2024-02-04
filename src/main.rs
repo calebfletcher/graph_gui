@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use eframe::{
     egui::{self, Label, Layout, Margin},
     epaint::{Color32, Rounding},
@@ -8,6 +10,7 @@ use egui_snarl::{
 };
 use egui_tiles::{Container, Linear, LinearDir, Tile};
 
+mod execution_engine;
 mod node_graph;
 
 fn main() -> Result<(), eframe::Error> {
@@ -24,10 +27,7 @@ fn main() -> Result<(), eframe::Error> {
 
 pub enum Pane {
     Config,
-    Nodes {
-        snarl: Snarl<node_graph::DemoNode>,
-        style: SnarlStyle,
-    },
+    Nodes,
     Statistics,
 }
 
@@ -46,9 +46,13 @@ impl Pane {
     }
 }
 
-struct TreeBehavior;
+struct TreeBehavior<'a> {
+    snarl: &'a mut Snarl<node_graph::DemoNode>,
+    style: &'a SnarlStyle,
+    task_execution: &'a mut Option<execution_engine::TaskDag>,
+}
 
-impl egui_tiles::Behavior<Pane> for TreeBehavior {
+impl<'a> egui_tiles::Behavior<Pane> for TreeBehavior<'a> {
     fn pane_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -70,15 +74,35 @@ impl egui_tiles::Behavior<Pane> for TreeBehavior {
 
         match pane {
             Pane::Config => {}
-            Pane::Nodes { snarl, style } => {
-                snarl.show(
+            Pane::Nodes => {
+                self.snarl.show(
                     &mut node_graph::DemoViewer,
-                    style,
+                    self.style,
                     egui::Id::new("snarl"),
                     ui,
                 );
             }
-            Pane::Statistics => {}
+            Pane::Statistics => {
+                if ui.button("Calculate Task Dag").clicked() {
+                    let graph = node_graph::DemoViewer::as_petgraph(self.snarl);
+                    *self.task_execution = Some(execution_engine::TaskDag::new(&graph))
+                }
+
+                if let Some(task_dag) = self.task_execution {
+                    for task in task_dag.ready_tasks().collect::<Vec<_>>() {
+                        ui.group(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Task ID: {}", task.0));
+                                ui.separator();
+                                if ui.button("Complete").clicked() {
+                                    let _res = task_dag.complete_task(task);
+                                    // TODO: Do something with the newly ready tasks
+                                }
+                            })
+                        });
+                    }
+                }
+            }
         }
 
         if response
@@ -103,6 +127,9 @@ impl egui_tiles::Behavior<Pane> for TreeBehavior {
 
 struct MyApp {
     tree: egui_tiles::Tree<Pane>,
+    snarl: Snarl<node_graph::DemoNode>,
+    style: SnarlStyle,
+    task_execution: Option<execution_engine::TaskDag>,
 }
 
 impl Default for MyApp {
@@ -118,7 +145,7 @@ impl Default for MyApp {
         });
 
         let config_pane = tiles.insert_pane(Pane::Config);
-        let nodes_pane = tiles.insert_pane(Pane::Nodes { snarl, style });
+        let nodes_pane = tiles.insert_pane(Pane::Nodes);
         let stats_pane = tiles.insert_pane(Pane::Statistics);
 
         let mut inner = Linear {
@@ -133,7 +160,12 @@ impl Default for MyApp {
 
         let tree = egui_tiles::Tree::new("tree", root, tiles);
 
-        Self { tree }
+        Self {
+            tree,
+            snarl,
+            style,
+            task_execution: None,
+        }
     }
 }
 
@@ -142,16 +174,6 @@ impl eframe::App for MyApp {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    let snarl = self
-                        .tree
-                        .tiles
-                        .iter_mut()
-                        .find_map(|(_, pane)| match pane {
-                            Tile::Pane(Pane::Nodes { snarl, .. }) => Some(snarl),
-                            _ => None,
-                        })
-                        .unwrap();
-
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close)
                     }
@@ -160,7 +182,7 @@ impl eframe::App for MyApp {
                             .add_filter("Graph File", &["dot"])
                             .save_file()
                         {
-                            let graph = node_graph::DemoViewer::as_petgraph(snarl);
+                            let graph = node_graph::DemoViewer::as_petgraph(&mut self.snarl);
 
                             // Write to file
                             std::fs::write(
@@ -171,7 +193,7 @@ impl eframe::App for MyApp {
                         }
                     }
                     if ui.button("Eval").clicked() {
-                        node_graph::DemoViewer::evaluate(snarl, None);
+                        node_graph::DemoViewer::evaluate(&mut self.snarl, None);
                     }
                 });
 
@@ -185,7 +207,52 @@ impl eframe::App for MyApp {
                 ..egui::Frame::central_panel(&ctx.style())
             })
             .show(ctx, |ui| {
-                self.tree.ui(&mut TreeBehavior, ui);
+                self.tree.ui(
+                    &mut TreeBehavior {
+                        snarl: &mut self.snarl,
+                        style: &self.style,
+                        task_execution: &mut self.task_execution,
+                    },
+                    ui,
+                );
             });
+    }
+}
+
+#[allow(dead_code)]
+fn series_parallel(graph: &petgraph::prelude::Graph<egui_snarl::NodeId, ()>) {
+    // Create map of all nodes and their dependencies
+    let mut data = HashMap::new();
+    for idx in graph.node_indices() {
+        let node_deps = graph
+            .neighbors_directed(idx, petgraph::Direction::Incoming)
+            .map(|idx| graph[idx])
+            .collect::<HashSet<_>>();
+        data.insert(graph[idx], node_deps);
+    }
+
+    loop {
+        // Find all dependents with no outstanding dependencies
+        let ordered = data
+            .iter()
+            .filter_map(|(k, v)| v.is_empty().then_some(*k))
+            .collect::<HashSet<_>>();
+        // If there is none remaining, break
+        if ordered.is_empty() {
+            break;
+        }
+
+        let mut temp_ordered = ordered.iter().copied().collect::<Vec<_>>();
+        temp_ordered.sort_unstable();
+        println!("{:?}", temp_ordered);
+
+        data = data
+            .into_iter()
+            .filter(|(k, _v)| !ordered.contains(k))
+            .map(|(k, v)| (k, v.difference(&ordered).copied().collect()))
+            .collect();
+    }
+    if !data.is_empty() {
+        panic!("cyclic graph");
     }
 }

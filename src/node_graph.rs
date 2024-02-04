@@ -74,7 +74,7 @@ impl DemoViewer {
 
         // Add edges
         for (node_id, node) in snarl.node_ids() {
-            let downstream_nodeids = (0..Self.outputs(node))
+            let downstream_nodeids = (0..DemoViewer.outputs(node))
                 .map(|i| {
                     snarl.out_pin(OutPinId {
                         node: node_id,
@@ -129,7 +129,19 @@ impl DemoViewer {
 }
 
 impl SnarlViewer<DemoNode> for DemoViewer {
-    #[inline]
+    fn show_header(
+        &mut self,
+        node: NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut Ui,
+        _scale: f32,
+        _snarl: &mut Snarl<DemoNode>,
+    ) {
+        //ui.label(self.title(&snarl[node]));
+        ui.label(format!("ID: {}", node.0));
+    }
+
     fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<DemoNode>) {
         // Validate connection
         match (&snarl[from.id.node], &snarl[to.id.node]) {
