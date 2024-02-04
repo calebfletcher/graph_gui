@@ -59,6 +59,9 @@ pub trait Node {
     fn update(&mut self, inputs: &[TypedData]) {
         let _ = inputs;
     }
+    fn show_input(&mut self, idx: usize, remote: Option<TypedData>, ui: &mut Ui) {
+        let _ = (idx, remote, ui);
+    }
     fn show_output(&mut self, idx: usize, ui: &mut Ui) {
         let _ = (idx, ui);
     }
@@ -96,6 +99,7 @@ impl Node for NumberNode {
     fn show_output(&mut self, idx: usize, ui: &mut Ui) {
         assert_eq!(idx, 0);
         if ui.add(egui::DragValue::new(&mut self.value)).changed() {
+            // TODO: Evaluate and propagate
             //Self::evaluate(snarl, Some(pin.id.node));
         }
     }
@@ -122,6 +126,17 @@ impl Node for AddNode {
     fn output_value(&self, idx: usize) -> Option<TypedData> {
         assert_eq!(idx, 0);
         self.cached_result.map(TypedData::Number)
+    }
+
+    fn show_input(&mut self, idx: usize, remote: Option<TypedData>, ui: &mut Ui) {
+        assert!(idx < 2);
+        let Some(remote) = remote else {
+            return;
+        };
+        match remote {
+            TypedData::Number(val) => ui.label(format_float(val)),
+            _ => unimplemented!(),
+        };
     }
 
     fn show_output(&mut self, idx: usize, ui: &mut Ui) {
@@ -161,6 +176,17 @@ impl Node for SinkNode {
 
     fn outputs(&self) -> Vec<DataType> {
         Vec::new()
+    }
+
+    fn show_input(&mut self, idx: usize, remote: Option<TypedData>, ui: &mut Ui) {
+        assert_eq!(idx, 0);
+        let Some(remote) = remote else {
+            return;
+        };
+        match remote {
+            TypedData::Number(val) => ui.label(format_float(val)),
+            _ => unimplemented!(),
+        };
     }
 }
 
@@ -244,9 +270,6 @@ impl DemoViewer {
                 // All inputs are connected
                 snarl[id].update(&inputs);
             }
-
-            // TODO: Propogate
-            //DemoNode::update(id, snarl);
         }
     }
 }
@@ -335,6 +358,12 @@ impl SnarlViewer<Box<dyn Node>> for DemoViewer {
         _scale: f32,
         snarl: &mut Snarl<Box<dyn Node>>,
     ) -> PinInfo {
+        assert!(pin.remotes.len() <= 1);
+        let remote = pin
+            .remotes
+            .first()
+            .and_then(|remote| snarl[remote.node].output_value(remote.output));
+        snarl[pin.id.node].show_input(pin.id.input, remote, ui);
         snarl[pin.id.node].inputs()[pin.id.input].pin_info()
     }
 
