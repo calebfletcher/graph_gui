@@ -15,11 +15,11 @@ mod node_graph;
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 600.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 600.0]),
         ..Default::default()
     };
     eframe::run_native(
-        "egui_tiles example",
+        "Task Execution Engine",
         options,
         Box::new(|_cc| Box::<MyApp>::default()),
     )
@@ -59,12 +59,14 @@ impl<'a> egui_tiles::Behavior<Pane> for TreeBehavior<'a> {
         _tile_id: egui_tiles::TileId,
         pane: &mut Pane,
     ) -> egui_tiles::UiResponse {
+        // Title bar
         let (response, painter) = ui.allocate_painter(
             egui::Vec2::new(ui.available_width(), 20.),
             egui::Sense::click_and_drag(),
         );
         painter.rect_filled(painter.clip_rect(), Rounding::same(3.), Color32::LIGHT_GRAY);
 
+        // Title
         let label_resp = ui
             .child_ui(
                 painter.clip_rect(),
@@ -83,28 +85,39 @@ impl<'a> egui_tiles::Behavior<Pane> for TreeBehavior<'a> {
                 );
             }
             Pane::Statistics => {
-                if ui.button("Calculate Task Dag").clicked() {
-                    let graph = node_graph::DemoViewer::as_petgraph(self.snarl);
-                    *self.task_execution = Some(execution_engine::TaskDag::new(&graph))
-                }
-
-                if let Some(task_dag) = self.task_execution {
-                    for task in task_dag.ready_tasks().collect::<Vec<_>>() {
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("Task ID: {}", task.0));
-                                ui.separator();
-                                if ui.button("Complete").clicked() {
-                                    let _res = task_dag.complete_task(task);
-                                    // TODO: Do something with the newly ready tasks
-                                }
-                            })
-                        });
+                egui::Frame::central_panel(ui.style()).show(ui, |ui| {
+                    if ui.button("Calculate Task Dag").clicked() {
+                        let graph = node_graph::DemoViewer::as_petgraph(self.snarl);
+                        *self.task_execution = Some(execution_engine::TaskDag::new(&graph))
                     }
-                }
+
+                    if let Some(task_dag) = self.task_execution {
+                        let ready_tasks = task_dag.ready_tasks().collect::<HashSet<_>>();
+                        let blocked_tasks = task_dag.blocked_tasks().collect::<HashSet<_>>();
+                        for (id, _node) in self.snarl.node_ids() {
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("Task ID: {}", id.0));
+                                    ui.separator();
+                                    if ready_tasks.contains(&id) {
+                                        if ui.button("Complete").clicked() {
+                                            let _res = task_dag.complete_task(id);
+                                            // TODO: Do something with the newly ready tasks
+                                        }
+                                    } else if blocked_tasks.contains(&id) {
+                                        ui.label("Blocked");
+                                    } else {
+                                        ui.label("Completed");
+                                    }
+                                })
+                            });
+                        }
+                    }
+                });
             }
         }
 
+        // Allow dragging from the title bar
         if response
             .union(label_resp)
             .on_hover_cursor(egui::CursorIcon::Grab)
@@ -202,10 +215,7 @@ impl eframe::App for MyApp {
         });
 
         egui::CentralPanel::default()
-            .frame(egui::Frame {
-                inner_margin: Margin::ZERO,
-                ..egui::Frame::central_panel(&ctx.style())
-            })
+            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(Margin::ZERO))
             .show(ctx, |ui| {
                 self.tree.ui(
                     &mut TreeBehavior {

@@ -46,4 +46,11 @@ impl TaskDag {
 
         new_ready_tasks
     }
+
+    pub fn blocked_tasks(&mut self) -> impl Iterator<Item = NodeId> + '_ {
+        self.outstanding
+            .iter()
+            .filter(|(_task, pending_deps)| !pending_deps.is_empty())
+            .map(|(task, _)| *task)
+    }
 }
